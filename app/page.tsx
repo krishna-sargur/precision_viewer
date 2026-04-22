@@ -529,12 +529,13 @@ const Empty = ({ onLoad, onFolder }) => (
   </div>
 );
 
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
 export default function PatientRaveGui() {
-  const [parsed,    setParsed]    = useState(null);
+  const [parsed,    setParsed]    = useState<any>(null);
   const [xlsxName,  setXlsxName]  = useState("");
   const [raveBlobs, setRaveBlobs] = useState({});
-  const [raveDir,   setRaveDir]   = useState(null);
-  const [selId,     setSelId]     = useState(null);
+  const [selId,     setSelId]     = useState<string|null>(null);
   const [search,    setSearch]    = useState("");
   const [sortBy,    setSortBy]    = useState("num-asc");
   const [tab,       setTab]       = useState("patients");
@@ -551,10 +552,23 @@ export default function PatientRaveGui() {
     } catch (e) { setError(e?.message ?? "Could not parse workbook."); }
   }, []);
 
+  useEffect(() => {
+    fetch(`${BASE}/patient_control_sheet.xlsx`)
+      .then((r) => r.arrayBuffer())
+      .then((buf) => {
+        const p = parseWb(buf);
+        setParsed(p); setXlsxName("patient_control_sheet.xlsx");
+        if (p.patients[0]) setSelId(p.patients[0].caseId);
+      })
+      .catch(() => {});
+  }, []);
+
+  const [raveDir, setRaveDir] = useState<any>(null);
+
   const linkFolder = useCallback(async () => {
     if (!("showDirectoryPicker" in window)) { alert("Folder linking requires Chrome or Edge."); return; }
-    try { const h = await window.showDirectoryPicker({ mode:"read" }); setRaveDir(h); }
-    catch (e) { if (e.name!=="AbortError") console.error(e); }
+    try { const h = await (window as any).showDirectoryPicker({ mode:"read" }); setRaveDir(h); }
+    catch (e: any) { if (e.name!=="AbortError") console.error(e); }
   }, []);
 
   const loadManual = useCallback((label, file) => {
@@ -565,7 +579,7 @@ export default function PatientRaveGui() {
   useEffect(() => {
     if (!parsed||!selId) { setRaveUrl(""); return; }
     const p = parsed.patientMap[selId];
-    if (!p) { setRaveUrl(""); return; }
+    if (!p||!p.raveName) { setRaveUrl(""); return; }
     if (raveBlobs[p.raveName]) { setRaveUrl(raveBlobs[p.raveName]); return; }
     if (raveDir) {
       (async () => {
@@ -625,7 +639,7 @@ export default function PatientRaveGui() {
           <HBtn icon={<FileSpreadsheet size={13}/>} label="Load workbook">
             <input type="file" accept=".xlsx,.xls" style={{ position:"absolute", inset:0, opacity:0, cursor:"pointer" }} onChange={(e)=>{const f=e.target.files?.[0];if(f)loadWb(f);}}/>
           </HBtn>
-          <HBtn icon={<FolderOpen size={13}/>} label="Link RAVE folder" onClick={linkFolder}/>
+          <HBtn icon={<FolderOpen size={13}/>} label="Link RAVE folder" onClick={linkFolder}>{null}</HBtn>
         </div>
       </header>
 
