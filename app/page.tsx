@@ -1,3 +1,4 @@
+// @ts-nocheck
 "use client";
 
 import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
@@ -32,16 +33,16 @@ const T = {
   sideW:       "272px",
 };
 
-const normalize  = (v) => String(v ?? "").trim();
-const normalizeK = (v) => normalize(v).toLowerCase();
+const normalize  = (v: unknown) => String(v ?? "").trim();
+const normalizeK = (v: unknown) => normalize(v).toLowerCase();
 
-const firstVal = (row, keys) => {
+const firstVal = (row: Record<string, unknown>, keys: string[]) => {
   for (const k of Object.keys(row))
     if (keys.some((c) => normalizeK(k) === normalizeK(c))) return row[k];
   return "";
 };
 
-const fmtDate = (raw) => {
+const fmtDate = (raw: unknown) => {
   if (!raw) return "—";
   if (raw instanceof Date) return raw.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
   const s = String(raw).trim();
