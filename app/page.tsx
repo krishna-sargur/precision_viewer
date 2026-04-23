@@ -57,32 +57,31 @@ const inferRave = (label) => {
 };
 
 const GROUPS = [
-  { key: "baseline_closed",  label: "Baseline — Eyes Closed",    pat: ["baseline eyes closed"] },
-  { key: "baseline_open",    label: "Baseline — Eyes Open",      pat: ["baseline eyes open"]   },
-  { key: "baseline_other",   label: "Baseline (other)",          pat: ["baseline"]              },
-  { key: "dynamic_range",    label: "Dynamic Range",             pat: ["dynamic range"]         },
-  { key: "beta_desync",      label: "Beta Desync",               pat: ["beta desync"]           },
-  { key: "contra_random",    label: "Contralateral Random",      pat: ["contralateral random"]  },
-  { key: "contra_sequence",  label: "Contralateral Sequence",    pat: ["contralateral sequence"]},
-  { key: "contra_irregular", label: "Contralateral Irregular",   pat: ["contralateral irregular"]},
-  { key: "ipsilateral",      label: "Ipsilateral Hand",          pat: ["ipsilateral"]           },
-  { key: "open_loop",        label: "Open Loop",                 pat: ["open loop","open-loop"] },
-  { key: "closed_loop",      label: "Closed Loop",               pat: ["closed loop"]           },
-  { key: "gestures",         label: "Gestures",                  pat: ["gesture"]               },
-  { key: "digits",           label: "Digit Paced",               pat: ["digit"]                 },
-  { key: "breakdance",       label: "Breakdance",                pat: ["breakdance"]            },
-  { key: "validation",       label: "Validation",                pat: ["validation"]            },
-  { key: "irregular_train",  label: "Irregular Training",        pat: ["irregular training"]    },
-  { key: "speech",           label: "Speech Control",            pat: ["speech"]                },
-  { key: "arm_reach",        label: "Arm Reach",                 pat: ["arm reach"]             },
-  { key: "passive",          label: "Passive Movement",          pat: ["passive"]               },
-  { key: "stimulation",      label: "Stimulation (SSEP)",        pat: ["stimulation"]           },
-  { key: "mer",              label: "MER Recording",             pat: ["mer recording","mer "]  },
-  { key: "dbs",              label: "DBS",                       pat: ["dbs"]                   },
-  { key: "robot",            label: "Robot Tasks",               pat: ["robot"]                 },
-  { key: "self_paced",       label: "Self-Paced",                pat: ["self paced","self-paced"]},
-  { key: "calibration",      label: "Calibration",              pat: ["calibration"]           },
-  { key: "rock_paper",       label: "Rock / Paper",              pat: ["rock","paper"]          },
+  { key: "baseline_closed",  label: "Baseline — Eyes Closed",    pat: ["baseline eyes closed"]                          },
+  { key: "baseline_open",    label: "Baseline — Eyes Open",      pat: ["baseline eyes open"]                            },
+  { key: "baseline_other",   label: "Baseline (other)",          pat: ["baseline"]                                      },
+  { key: "dynamic_range",    label: "Dynamic Range",             pat: ["dynamic range"]                                 },
+  { key: "beta_desync",      label: "Beta Desync",               pat: ["beta desync"]                                   },
+  { key: "ipsi_sequence",    label: "Ipsilateral Sequence",      pat: ["ipsilateral sequence"]                          },
+  { key: "contra_sequence",  label: "Contralateral Sequence",    pat: ["contralateral sequence","sequence"]             },
+  { key: "ipsi_random",      label: "Ipsilateral Random",        pat: ["ipsilateral random"]                            },
+  { key: "contra_random",    label: "Contralateral Random",      pat: ["contralateral random","random","gesture"]       },
+  { key: "contra_irregular", label: "Contralateral Irregular",   pat: ["contralateral irregular"]                       },
+  { key: "ipsilateral",      label: "Ipsilateral Hand",          pat: ["ipsilateral"]                                   },
+  { key: "imagined",         label: "Imagined",                  pat: ["open loop","open-loop","closed loop","imagined","robot"] },
+  { key: "digits",           label: "Digit Paced",               pat: ["digit"]                                         },
+  { key: "breakdance",       label: "Breakdance",                pat: ["breakdance"]                                    },
+  { key: "validation",       label: "Validation",                pat: ["validation"]                                    },
+  { key: "irregular_train",  label: "Irregular Training",        pat: ["irregular training"]                            },
+  { key: "speech",           label: "Speech Control",            pat: ["speech"]                                        },
+  { key: "arm_reach",        label: "Arm Reach",                 pat: ["arm reach"]                                     },
+  { key: "passive",          label: "Passive Movement",          pat: ["passive"]                                       },
+  { key: "stimulation",      label: "Stimulation (SSEP)",        pat: ["stimulation"]                                   },
+  { key: "mer",              label: "MER Recording",             pat: ["mer recording","mer "]                          },
+  { key: "dbs",              label: "DBS",                       pat: ["dbs"]                                           },
+  { key: "self_paced",       label: "Self-Paced",                pat: ["self paced","self-paced"]                       },
+  { key: "calibration",      label: "Calibration",               pat: ["calibration"]                                   },
+  { key: "rock_paper",       label: "Rock / Paper",              pat: ["rock","paper"]                                  },
 ];
 
 const groupOf = (name) => {
@@ -105,9 +104,17 @@ const parseWb = (buffer) => {
     const label  = normalize(firstVal(row, ["Label"]));
     if (!caseId || !label || label.toLowerCase().includes("declined")) continue;
     const sheet = wb.Sheets[label];
-    const taskRows = sheet
+    const allSheetRows = sheet
       ? XLSX.utils.sheet_to_json(sheet, { defval: "" }).filter((r) => Object.values(r).some((v) => normalize(v)))
       : [];
+    const taskRows = [], hardwareRows = [];
+    let inHardware = false;
+    for (const r of allSheetRows) {
+      const tn = normalizeK(firstVal(r, ["Tasks","Task"]));
+      if (tn === "hardware control") { inHardware = true; continue; }
+      if (inHardware) hardwareRows.push(r);
+      else taskRows.push(r);
+    }
     for (const tr of taskRows) { const tn = normalize(firstVal(tr, ["Tasks","Task"])); if (tn) taskSet.add(tn); }
     const site = normalize(firstVal(row, ["Site"]));
     if (site) targetSet.add(site);
@@ -127,7 +134,7 @@ const parseWb = (buffer) => {
       localization:      normalize(firstVal(row, ["Localization"])),
       raveLink:          normalize(firstVal(row, ["Rave Link"])),
       diagnosis:         normalize(firstVal(row, ["Diagnosis"])),
-      taskRows,
+      taskRows, hardwareRows,
       raveName: inferRave(label),
     };
   }
@@ -459,7 +466,7 @@ const Overview = ({ parsed }) => {
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
             <tr style={{ borderBottom:`1px solid ${T.border}` }}>
-              {["Patient","Date","Site","Box","Brains","Loc.","RAVE","Dx"].map((h) => (
+              {["Patient","Date","Site","Condition","Box","Brains","Loc.","RAVE","Dx"].map((h) => (
                 <th key={h} style={{ padding:"8px 12px", textAlign:"left", fontSize:10, fontFamily:"'Source Code Pro',monospace", color:T.inkFaint, textTransform:"uppercase", letterSpacing:"0.1em", fontWeight:500 }}>{h}</th>
               ))}
             </tr>
@@ -470,6 +477,7 @@ const Overview = ({ parsed }) => {
                 <td style={{ padding:"7px 12px", fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:13.5, color:T.ink }}>{p.displayName}</td>
                 <td style={{ padding:"7px 12px", fontSize:12, color:T.inkSoft }}>{p.date}</td>
                 <td style={{ padding:"7px 12px" }}>{p.site?<Tag strong>{p.site}</Tag>:<span style={{color:T.inkFainter}}>—</span>}</td>
+                <td style={{ padding:"7px 12px" }}>{p.condition?<Tag>{p.condition}</Tag>:<span style={{color:T.inkFainter}}>—</span>}</td>
                 {[p.uploadedBox,p.uploadedBrains,p.localization,p.raveLink,p.diagnosis].map((v,vi) => (
                   <td key={vi} style={{ padding:"7px 12px" }}><StatusPip val={v}/></td>
                 ))}
@@ -623,7 +631,7 @@ export default function PatientRaveGui() {
 
       <header style={{ position:"sticky", top:0, zIndex:50, background:"rgba(253,248,242,0.95)", backdropFilter:"blur(10px)", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 22px", height:56, gap:24, flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:10, flexShrink:0 }}>
-          <span style={{ fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:20, color:T.ink }}>Precision Viewer</span>
+          <span style={{ fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:20, color:T.ink }}>Restore Viewer</span>
           <span style={{ fontSize:10, color:T.inkFainter, letterSpacing:"0.12em", textTransform:"uppercase", fontFamily:"'Source Code Pro',monospace" }}>Cajigas Lab</span>
         </div>
         <nav style={{ display:"flex", gap:2, flex:1, justifyContent:"center" }}>
@@ -710,6 +718,17 @@ export default function PatientRaveGui() {
                   <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:7 }}>Pipeline status</div>
                   <PipelineRow p={cur}/>
                 </div>
+                {cur.hardwareRows?.length > 0 && (
+                  <div style={{ marginTop:16 }}>
+                    <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:7 }}>Hardware</div>
+                    <div style={{ display:"flex", flexWrap:"wrap", gap:5 }}>
+                      {cur.hardwareRows.map((r,i) => {
+                        const hw = normalize(firstVal(r, ["Tasks","Task"]));
+                        return hw ? <span key={i} style={{ background:T.surfaceHi, border:`1px solid ${T.border}`, borderRadius:5, padding:"4px 10px", fontSize:12, fontFamily:"'Source Code Pro',monospace", color:T.inkSoft }}>{hw}</span> : null;
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <Divider label="Reconstruction"/>
