@@ -645,7 +645,7 @@ export default function PatientRaveGui() {
 
       <header style={{ position:"sticky", top:0, zIndex:50, background:"rgba(253,248,242,0.95)", backdropFilter:"blur(10px)", borderBottom:`1px solid ${T.border}`, display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 22px", height:56, gap:24, flexShrink:0 }}>
         <div style={{ display:"flex", alignItems:"baseline", gap:10, flexShrink:0 }}>
-          <span style={{ fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:20, color:T.ink }}>Restore Viewer</span>
+          <span style={{ fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:20, color:T.ink }}>Restore Lab Viewer</span>
           <span style={{ fontSize:10, color:T.inkFainter, letterSpacing:"0.12em", textTransform:"uppercase", fontFamily:"'Source Code Pro',monospace" }}>Cajigas Lab</span>
         </div>
         <nav style={{ display:"flex", gap:2, flex:1, justifyContent:"center" }}>
