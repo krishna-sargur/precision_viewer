@@ -65,15 +65,15 @@ const GROUPS = [
   { key: "ipsi_sequence",    label: "Ipsilateral Sequence",      pat: ["ipsilateral sequence"]                          },
   { key: "contra_sequence",  label: "Contralateral Sequence",    pat: ["contralateral sequence","sequence"]             },
   { key: "ipsi_random",      label: "Ipsilateral Random",        pat: ["ipsilateral random"]                            },
-  { key: "contra_random",    label: "Contralateral Random",      pat: ["contralateral random","random","gesture"]       },
-  { key: "contra_irregular", label: "Contralateral Irregular",   pat: ["contralateral irregular"]                       },
   { key: "ipsilateral",      label: "Ipsilateral Hand",          pat: ["ipsilateral"]                                   },
   { key: "imagined",         label: "Imagined",                  pat: ["open loop","open-loop","closed loop","imagined","robot"] },
+  { key: "speech",           label: "Speech Control",            pat: ["speech"]                                        },
+  { key: "contra_random",    label: "Contralateral Random",      pat: ["contralateral random","random","gesture"]       },
+  { key: "contra_irregular", label: "Contralateral Irregular",   pat: ["contralateral irregular"]                       },
   { key: "digits",           label: "Digit Paced",               pat: ["digit"]                                         },
   { key: "breakdance",       label: "Breakdance",                pat: ["breakdance"]                                    },
   { key: "validation",       label: "Validation",                pat: ["validation"]                                    },
   { key: "irregular_train",  label: "Irregular Training",        pat: ["irregular training"]                            },
-  { key: "speech",           label: "Speech Control",            pat: ["speech"]                                        },
   { key: "arm_reach",        label: "Arm Reach",                 pat: ["arm reach"]                                     },
   { key: "passive",          label: "Passive Movement",          pat: ["passive"]                                       },
   { key: "stimulation",      label: "Stimulation (SSEP)",        pat: ["stimulation"]                                   },
@@ -519,21 +519,23 @@ const HBtn = ({ icon, label, onClick, children }) => (
   >{icon} {label}{children}</div>
 );
 
-const Empty = ({ onLoad, onFolder }) => (
+const Empty = ({ onLoad, onFolder, showFolderBtn }) => (
   <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", minHeight:440, gap:20, textAlign:"center" }}>
     <Brain size={44} color={T.inkFainter} strokeWidth={1} />
     <div>
       <div style={{ fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:28, color:T.ink, marginBottom:8 }}>Load Precision Data</div>
-      <div style={{ fontSize:14, color:T.inkFaint, maxWidth:400, lineHeight:1.7 }}>Load the patient control workbook and optionally link your RAVE folder to begin.</div>
+      <div style={{ fontSize:14, color:T.inkFaint, maxWidth:400, lineHeight:1.7 }}>Load the patient control workbook{showFolderBtn?" and optionally link your RAVE folder":""} to begin.</div>
     </div>
     <div style={{ display:"flex", gap:10 }}>
       <label style={{ display:"flex", alignItems:"center", gap:7, position:"relative", padding:"9px 18px", background:T.accent, color:"#fff", borderRadius:7, cursor:"pointer", fontSize:13, fontWeight:500 }}>
         <FileSpreadsheet size={14}/> Load workbook
         <input type="file" accept=".xlsx,.xls" style={{ position:"absolute", inset:0, opacity:0, cursor:"pointer" }} onChange={(e)=>{const f=e.target.files?.[0];if(f)onLoad(f);}}/>
       </label>
-      <button onClick={onFolder} style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 18px", background:T.surface, color:T.inkSoft, border:`1px solid ${T.border}`, borderRadius:7, cursor:"pointer", fontSize:13 }}>
-        <FolderOpen size={14}/> Link RAVE folder
-      </button>
+      {showFolderBtn && (
+        <button onClick={onFolder} style={{ display:"flex", alignItems:"center", gap:7, padding:"9px 18px", background:T.surface, color:T.inkSoft, border:`1px solid ${T.border}`, borderRadius:7, cursor:"pointer", fontSize:13 }}>
+          <FolderOpen size={14}/> Link RAVE folder
+        </button>
+      )}
     </div>
   </div>
 );
@@ -573,6 +575,14 @@ export default function PatientRaveGui() {
   }, []);
 
   const [raveDir, setRaveDir] = useState<any>(null);
+  const [serverRaveAvailable, setServerRaveAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch(`${BASE}/api/rave/check`)
+      .then((r) => r.json())
+      .then((d) => setServerRaveAvailable(d.available === true))
+      .catch(() => setServerRaveAvailable(false));
+  }, []);
 
   const linkFolder = useCallback(async () => {
     if (!("showDirectoryPicker" in window)) { alert("Folder linking requires Chrome or Edge."); return; }
@@ -589,7 +599,11 @@ export default function PatientRaveGui() {
     if (!parsed||!selId) { setRaveUrl(""); return; }
     const p = parsed.patientMap[selId];
     if (!p||!p.raveName) { setRaveUrl(""); return; }
+    // Manual blob override always wins
     if (raveBlobs[p.raveName]) { setRaveUrl(raveBlobs[p.raveName]); return; }
+    // Server RAVE folder
+    if (serverRaveAvailable) { setRaveUrl(`${BASE}/api/rave/file?name=${encodeURIComponent(p.raveName)}`); return; }
+    // Local folder picker fallback
     if (raveDir) {
       (async () => {
         try {
@@ -606,7 +620,7 @@ export default function PatientRaveGui() {
       return;
     }
     setRaveUrl("");
-  }, [selId, parsed, raveBlobs, raveDir]);
+  }, [selId, parsed, raveBlobs, raveDir, serverRaveAvailable]);
 
   const patientList = useMemo(() => {
     if (!parsed) return [];
@@ -644,11 +658,12 @@ export default function PatientRaveGui() {
         </nav>
         <div style={{ display:"flex", alignItems:"center", gap:8, flexShrink:0 }}>
           {parsed&&<span style={{ fontSize:11, color:T.inkFaint, fontFamily:"'Source Code Pro',monospace", padding:"3px 9px", background:T.surfaceHi, borderRadius:4, border:`1px solid ${T.border}` }}>{xlsxName}</span>}
-          {raveDir&&<span style={{ fontSize:11, color:T.ok, fontFamily:"'Source Code Pro',monospace", padding:"3px 9px", background:T.okBg, borderRadius:4 }}>● {raveDir.name}</span>}
+          {serverRaveAvailable===true && <span style={{ fontSize:11, color:T.ok, fontFamily:"'Source Code Pro',monospace", padding:"3px 9px", background:T.okBg, borderRadius:4 }}>● server RAVE</span>}
+          {serverRaveAvailable!==true && raveDir&&<span style={{ fontSize:11, color:T.ok, fontFamily:"'Source Code Pro',monospace", padding:"3px 9px", background:T.okBg, borderRadius:4 }}>● {raveDir.name}</span>}
           <HBtn icon={<FileSpreadsheet size={13}/>} label="Load workbook">
             <input type="file" accept=".xlsx,.xls" style={{ position:"absolute", inset:0, opacity:0, cursor:"pointer" }} onChange={(e)=>{const f=e.target.files?.[0];if(f)loadWb(f);}}/>
           </HBtn>
-          <HBtn icon={<FolderOpen size={13}/>} label="Link RAVE folder" onClick={linkFolder}>{null}</HBtn>
+          {serverRaveAvailable!==true && <HBtn icon={<FolderOpen size={13}/>} label="Link RAVE folder" onClick={linkFolder}>{null}</HBtn>}
         </div>
       </header>
 
@@ -679,7 +694,7 @@ export default function PatientRaveGui() {
             ) : (
               <div style={{ flex:1, overflowY:"auto", padding:"8px 10px" }}>
                 {patientList.map((p) => (
-                  <SideItem key={p.caseId} p={p} active={selId===p.caseId} hasRave={!!raveBlobs[p.raveName]}
+                  <SideItem key={p.caseId} p={p} active={selId===p.caseId} hasRave={!!raveBlobs[p.raveName] || (serverRaveAvailable === true && !!p.raveName)}
                     onClick={() => { setSelId(p.caseId); contentRef.current?.scrollTo({top:0,behavior:"smooth"}); }}/>
                 ))}
               </div>
@@ -688,7 +703,7 @@ export default function PatientRaveGui() {
         )}
 
         <main ref={contentRef} style={{ flex:1, overflowY:"auto", padding:"28px 32px", background:T.bg }}>
-          {tab==="patients"&&!parsed&&<Empty onLoad={loadWb} onFolder={linkFolder}/>}
+          {tab==="patients"&&!parsed&&<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>}
           {tab==="patients"&&parsed&&!cur&&<div style={{ color:T.inkFainter, textAlign:"center", marginTop:80, fontFamily:"'Lora',serif", fontStyle:"italic", fontSize:18 }}>Select a patient from the sidebar</div>}
           {tab==="patients"&&cur&&(
             <div style={{ maxWidth:1060 }}>
@@ -749,9 +764,9 @@ export default function PatientRaveGui() {
             </div>
           )}
 
-          {tab==="tasks"&&<div style={{maxWidth:1060}}><Divider label="Tasks"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder}/>:<TasksBrowse parsed={parsed}/>}</div>}
-          {tab==="targets"&&<div style={{maxWidth:1060}}><Divider label="DBS Targets"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder}/>:<TargetsBrowse parsed={parsed}/>}</div>}
-          {tab==="overview"&&<div style={{maxWidth:1060}}><Divider label="Overview"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder}/>:<Overview parsed={parsed}/>}</div>}
+          {tab==="tasks"&&<div style={{maxWidth:1060}}><Divider label="Tasks"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<TasksBrowse parsed={parsed}/>}</div>}
+          {tab==="targets"&&<div style={{maxWidth:1060}}><Divider label="DBS Targets"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<TargetsBrowse parsed={parsed}/>}</div>}
+          {tab==="overview"&&<div style={{maxWidth:1060}}><Divider label="Overview"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<Overview parsed={parsed}/>}</div>}
         </main>
       </div>
     </div>
