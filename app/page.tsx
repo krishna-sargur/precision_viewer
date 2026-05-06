@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 import {
   Search, FolderOpen, FileSpreadsheet, ExternalLink,
   Users, AlertCircle, RefreshCw, Brain, BarChart3,
-  ListChecks, Crosshair, Activity, Database, Loader,
+  ListChecks, Crosshair, Activity, Database, Loader, Code2,
 } from "lucide-react";
 
 const T = {
@@ -540,6 +540,299 @@ const Empty = ({ onLoad, onFolder, showFolderBtn }) => (
   </div>
 );
 
+const VARIABLE_OPTIONS = [
+  { key:"ecog",              label:"ECoG matrix",       group:"ECoG",       desc:'pt{n}_ecog_np  — shape (C, T)' },
+  { key:"channels",          label:"Channel list",      group:"ECoG",       desc:'ch_hw  — hardware IDs per row' },
+  { key:"bad_channels",      label:"Bad channels",      group:"ECoG",       desc:'bad_hw  — flagged > 2 MΩ' },
+  { key:"verified_timings",  label:"Verified timings",  group:"Behavioral", desc:'verified_timings' },
+  { key:"transition_labels", label:"Transition labels", group:"Behavioral", desc:'filtVisualTransitionLabels' },
+  { key:"body_position",     label:"Body position",     group:"Kinematics", desc:'body, body_x/y/z' },
+  { key:"timestamps",        label:"Timestamps",        group:"Kinematics", desc:'t_hand, t_body' },
+];
+
+const DEFAULT_VARS = { ecog:true, channels:true, bad_channels:true, verified_timings:false, transition_labels:false, body_position:false, timestamps:false };
+
+const GetData = ({ parsed }) => {
+  const firstId = parsed.patients[0]?.caseId ?? "";
+  const [selId,   setSelId]   = useState(firstId);
+  const [selTask, setSelTask] = useState("");
+  const [recName, setRecName] = useState("");
+  const [vars,    setVars]    = useState(DEFAULT_VARS);
+  const [copied,       setCopied]       = useState(false);
+  const [lang,         setLang]         = useState("python");
+  const [precisionRecs, setPrecisionRecs] = useState<Record<string,string[]>>({});
+
+  useEffect(() => {
+    fetch(`${BASE}/api/precision/recordings`)
+      .then((r) => r.json())
+      .then((d) => { if (d.available) setPrecisionRecs(d.recordings ?? {}); })
+      .catch(() => {});
+  }, []);
+
+  const patient = parsed.patientMap[selId];
+  const ptNum   = patient?.num ?? 0;
+
+  const taskNames = useMemo(() => {
+    if (!patient) return [];
+    const seen = new Set();
+    return patient.taskRows
+      .map((r) => normalize(firstVal(r, ["Tasks","Task"])))
+      .filter((t) => { if (!t || seen.has(t)) return false; seen.add(t); return true; });
+  }, [patient]);
+
+  useEffect(() => { setSelTask(taskNames[0] ?? ""); }, [selId, taskNames]);
+  useEffect(() => {
+    if (!selTask) return;
+    const norm = (s) => s.toLowerCase().replace(/\s+/g,"_").replace(/[^a-z0-9_]/g,"");
+    const taskN = norm(selTask);
+    const ptRecs = [...(precisionRecs[String(ptNum)] ?? [])].sort((a,b) => b.length - a.length);
+    const matched = ptRecs.find((r) => norm(r) === taskN)
+      ?? ptRecs.find((r) => taskN.startsWith(norm(r)))
+      ?? ptRecs.find((r) => taskN.includes(norm(r)))
+      ?? null;
+    setRecName(matched ?? taskN);
+  }, [selTask, precisionRecs, ptNum]);
+
+  const code = useMemo(() => {
+    if (!patient || !selTask || !recName) return "# Select a patient and task above";
+    if (!Object.values(vars).some(Boolean)) return "# Select at least one variable below";
+
+    const tp = "out.pt" + ptNum + "." + recName;
+    const L = [];
+
+    L.push("import numpy as np", "import matlab.engine", "");
+    L.push("eng = matlab.engine.start_matlab()");
+    L.push("eng.addpath(eng.genpath('/vol/brains/bd1/restorelab/Precision_Data/preproc_env/Krishna/Functions'), nargout=0)");
+    L.push("eng.addpath('/vol/brains/bd1/restorelab/Precision_Data/matlab', nargout=0)");
+    L.push("");
+    L.push("out = eng.fetch_precision_data('import',");
+    L.push("                              'pt_id', " + ptNum + ",");
+    L.push("                              'rec_names', ['" + recName + "'],");
+    L.push("                               nargout=1)");
+    L.push("", "eng.workspace['out'] = out");
+
+    if (vars.ecog || vars.channels || vars.bad_channels) {
+      L.push("eng.eval(\"ecg = " + tp + ".ecog;\", nargout=0)");
+      if (vars.bad_channels)
+        L.push("eng.eval(\"sel = ecg.bad_impedance_channels(2e6); bad = sel.list(); sel.zeros();\", nargout=0)");
+      if (vars.ecog) {
+        L.push("eng.eval(\"ecog_mat = ecg.data;\", nargout=0)");
+        L.push("pt" + ptNum + "_ecog_np = np.array(eng.workspace['ecog_mat'])  # shape (C, T)");
+      }
+      if (vars.channels) {
+        L.push("eng.eval(\"ch = ecg.channel_list();\", nargout=0)");
+        L.push("ch_hw = np.array(eng.workspace['ch']).ravel()  # hardware IDs for rows");
+      }
+      if (vars.bad_channels)
+        L.push("bad_hw = np.array(eng.workspace['bad']).ravel()  # hardware IDs flagged > 2 MΩ");
+    }
+
+    if (vars.verified_timings) {
+      L.push("");
+      L.push("eng.eval(\"vt = " + tp + ".verified_timings;\", nargout=0)");
+      L.push("verified_timings = np.array(eng.workspace['vt'])");
+    }
+
+    if (vars.transition_labels) {
+      L.push("");
+      L.push("eng.eval(\"tl = " + tp + ".filtVisualTransitionLabels;\", nargout=0)");
+      L.push("transition_labels = np.array(eng.workspace['tl']).ravel()");
+    }
+
+    if (vars.body_position || vars.timestamps) {
+      L.push("");
+      if (vars.body_position) {
+        L.push("eng.eval(\"body = " + tp + ".position.body;\", nargout=0)");
+        L.push("body = np.array(eng.workspace['body'])");
+        L.push("body_x = body[0, :, :]");
+        L.push("body_y = body[1, :, :]");
+        L.push("body_z = body[2, :, :]");
+      }
+      if (vars.timestamps) {
+        L.push("eng.eval(\"t_hand = " + tp + ".position.time_hand;\", nargout=0)");
+        L.push("eng.eval(\"t_body = " + tp + ".position.time_body;\", nargout=0)");
+        L.push("t_hand = np.array(eng.workspace['t_hand']).ravel()");
+        L.push("t_body = np.array(eng.workspace['t_body']).ravel()");
+      }
+    }
+
+    const prints = [];
+    if (vars.ecog)              prints.push("print(f\"ECoG shape:            {pt" + ptNum + "_ecog_np.shape}\")");
+    if (vars.verified_timings)  prints.push("print(f\"Verified timings:      {verified_timings.shape}\")");
+    if (vars.transition_labels) prints.push("print(f\"Transition labels:     {transition_labels.shape}\")");
+    if (vars.body_position)     prints.push("print(f\"Body position shape:   {body.shape}\")");
+    if (vars.timestamps) {
+      prints.push("print(f\"Hand timestamps:       {t_hand.shape}\")");
+      prints.push("print(f\"Body timestamps:       {t_body.shape}\")");
+    }
+    if (prints.length) L.push("", ...prints);
+
+    return L.join("\n");
+  }, [patient, selTask, recName, vars, ptNum]);
+
+  const matlabCode = useMemo(() => {
+    if (!patient || !selTask || !recName) return "% Select a patient and task above";
+    if (!Object.values(vars).some(Boolean)) return "% Select at least one variable below";
+
+    const tp = "out.pt" + ptNum + "." + recName;
+    const L = [];
+
+    L.push("addpath(genpath('/vol/brains/bd1/restorelab/Precision_Data/preproc_env/Krishna/Functions'));");
+    L.push("addpath('/vol/brains/bd1/restorelab/Precision_Data/matlab');");
+    L.push("");
+    L.push("out = fetch_precision_data('import', ...");
+    L.push("                          'pt_id', " + ptNum + ", ...");
+    L.push("                          'rec_names', {'" + recName + "'});");
+
+    if (vars.ecog || vars.channels || vars.bad_channels) {
+      L.push("");
+      L.push("ecg = " + tp + ".ecog;");
+      if (vars.bad_channels)
+        L.push("sel = ecg.bad_impedance_channels(2e6); bad = sel.list(); sel.zeros();");
+      if (vars.ecog)
+        L.push("ecog_mat = ecg.data;  % shape (C, T)");
+      if (vars.channels)
+        L.push("ch_hw = ecg.channel_list();  % hardware IDs for rows");
+      if (vars.bad_channels)
+        L.push("bad_hw = bad;  % hardware IDs flagged > 2 MΩ");
+    }
+
+    if (vars.verified_timings) {
+      L.push("");
+      L.push("verified_timings = " + tp + ".verified_timings;");
+    }
+
+    if (vars.transition_labels) {
+      L.push("");
+      L.push("transition_labels = " + tp + ".filtVisualTransitionLabels;");
+    }
+
+    if (vars.body_position || vars.timestamps) {
+      L.push("");
+      if (vars.body_position) {
+        L.push("body = " + tp + ".position.body;");
+        L.push("body_x = body(1, :, :);");
+        L.push("body_y = body(2, :, :);");
+        L.push("body_z = body(3, :, :);");
+      }
+      if (vars.timestamps) {
+        L.push("t_hand = " + tp + ".position.time_hand;");
+        L.push("t_body = " + tp + ".position.time_body;");
+      }
+    }
+
+    const prints = [];
+    if (vars.ecog)              prints.push("fprintf('ECoG shape:            %s\\n', mat2str(size(ecog_mat)));");
+    if (vars.verified_timings)  prints.push("fprintf('Verified timings:      %s\\n', mat2str(size(verified_timings)));");
+    if (vars.transition_labels) prints.push("fprintf('Transition labels:     %s\\n', mat2str(size(transition_labels)));");
+    if (vars.body_position)     prints.push("fprintf('Body position shape:   %s\\n', mat2str(size(body)));");
+    if (vars.timestamps) {
+      prints.push("fprintf('Hand timestamps:       %s\\n', mat2str(size(t_hand)));");
+      prints.push("fprintf('Body timestamps:       %s\\n', mat2str(size(t_body)));");
+    }
+    if (prints.length) L.push("", ...prints);
+
+    return L.join("\n");
+  }, [patient, selTask, recName, vars, ptNum]);
+
+  const activeCode = lang === "python" ? code : matlabCode;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(activeCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const varGroups = [...new Set(VARIABLE_OPTIONS.map((v) => v.group))];
+  const ptRecs = precisionRecs[String(ptNum)] ?? [];
+
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:"300px 1fr", gap:24, alignItems:"start" }}>
+      <div>
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:5 }}>Patient</div>
+          <select value={selId} onChange={(e) => setSelId(e.target.value)}
+            style={{ width:"100%", padding:"7px 10px", background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.ink, fontSize:13, fontFamily:"inherit", cursor:"pointer" }}>
+            {parsed.patients.map((p) => <option key={p.caseId} value={p.caseId}>{p.displayName}</option>)}
+          </select>
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:5 }}>Task</div>
+          {taskNames.length === 0
+            ? <div style={{ fontSize:12, color:T.inkFaint, fontStyle:"italic" }}>No tasks for this patient</div>
+            : <select value={selTask} onChange={(e) => setSelTask(e.target.value)}
+                style={{ width:"100%", padding:"7px 10px", background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.ink, fontSize:13, fontFamily:"inherit", cursor:"pointer" }}>
+                {taskNames.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+          }
+        </div>
+
+        <div style={{ marginBottom:20 }}>
+          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:5 }}>rec_name key</div>
+          <input value={recName} onChange={(e) => setRecName(e.target.value)}
+            style={{ width:"100%", padding:"7px 10px", background:T.bg, border:`1px solid ${T.border}`, borderRadius:6, color:T.ink, fontSize:13, fontFamily:"'Source Code Pro',monospace" }}/>
+          <div style={{ fontSize:10.5, color:T.inkFaint, marginTop:5, fontFamily:"'Source Code Pro',monospace" }}>
+            {"out.pt"}{ptNum}{"."}<span style={{ color:T.accent }}>{recName || "…"}</span>
+          </div>
+          {ptRecs.length > 0 && (
+            <div style={{ marginTop:8 }}>
+              <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'Source Code Pro',monospace", marginBottom:4 }}>from JSON</div>
+              <div style={{ display:"flex", flexWrap:"wrap", gap:4 }}>
+                {ptRecs.map((r) => (
+                  <button key={r} onClick={() => setRecName(r)}
+                    style={{ padding:"2px 8px", borderRadius:3, border:`1px solid ${recName===r?T.accent:T.border}`, background:recName===r?T.accentLight:"transparent", color:recName===r?T.accentDark:T.inkSoft, fontSize:10.5, fontFamily:"'Source Code Pro',monospace", cursor:"pointer", transition:"all 0.12s" }}>
+                    {r}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:10 }}>Variables</div>
+          {varGroups.map((g) => (
+            <div key={g} style={{ marginBottom:14 }}>
+              <div style={{ fontSize:9.5, color:T.inkFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'Source Code Pro',monospace", marginBottom:5, paddingBottom:4, borderBottom:`1px solid ${T.borderSoft}` }}>{g}</div>
+              {VARIABLE_OPTIONS.filter((v) => v.group === g).map((v) => (
+                <label key={v.key} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"5px 0", cursor:"pointer" }}>
+                  <input type="checkbox" checked={vars[v.key]} onChange={() => setVars((pv) => ({ ...pv, [v.key]: !pv[v.key] }))}
+                    style={{ marginTop:2, accentColor:T.accent, cursor:"pointer" }}/>
+                  <div>
+                    <div style={{ fontSize:13, color:T.ink }}>{v.label}</div>
+                    <div style={{ fontSize:10.5, color:T.inkFaint, fontFamily:"'Source Code Pro',monospace" }}>{v.desc}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <div style={{ display:"flex", gap:2, background:T.surfaceHi, border:`1px solid ${T.border}`, borderRadius:6, padding:2 }}>
+            {["python","matlab"].map((l) => (
+              <button key={l} onClick={() => setLang(l)}
+                style={{ padding:"4px 12px", borderRadius:4, border:"none", background:lang===l?T.accent:"transparent", color:lang===l?"#fff":T.inkSoft, cursor:"pointer", fontSize:11.5, fontFamily:"'Source Code Pro',monospace", fontWeight:lang===l?500:400, transition:"all 0.15s" }}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <button onClick={handleCopy}
+            style={{ display:"flex", alignItems:"center", gap:5, padding:"5px 14px", background:copied ? T.ok : T.accent, color:"#fff", border:"none", borderRadius:5, cursor:"pointer", fontSize:12, fontFamily:"inherit", transition:"background 0.2s" }}>
+            {copied ? "✓ Copied" : "Copy"}
+          </button>
+        </div>
+        <pre style={{ margin:0, background:"#2a1f14", color:"#e8d8c0", fontFamily:"'Source Code Pro',monospace", fontSize:12.5, padding:"18px 20px", borderRadius:10, overflowX:"auto", whiteSpace:"pre", lineHeight:1.65, border:"1px solid #3a2818" }}>
+          {activeCode}
+        </pre>
+      </div>
+    </div>
+  );
+};
+
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 export default function PatientRaveGui() {
@@ -637,6 +930,7 @@ export default function PatientRaveGui() {
     {key:"tasks",    label:"Tasks",       icon:<ListChecks size={13}/>},
     {key:"targets",  label:"DBS Targets", icon:<Crosshair size={13}/>},
     {key:"overview", label:"Overview",    icon:<BarChart3 size={13}/>},
+    {key:"getdata",  label:"Get Data",    icon:<Code2 size={13}/>},
   ];
 
   return (
@@ -767,6 +1061,7 @@ export default function PatientRaveGui() {
           {tab==="tasks"&&<div style={{maxWidth:1060}}><Divider label="Tasks"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<TasksBrowse parsed={parsed}/>}</div>}
           {tab==="targets"&&<div style={{maxWidth:1060}}><Divider label="DBS Targets"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<TargetsBrowse parsed={parsed}/>}</div>}
           {tab==="overview"&&<div style={{maxWidth:1060}}><Divider label="Overview"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<Overview parsed={parsed}/>}</div>}
+          {tab==="getdata"&&<div style={{maxWidth:1060}}><Divider label="Get Data"/>{!parsed?<Empty onLoad={loadWb} onFolder={linkFolder} showFolderBtn={serverRaveAvailable!==true}/>:<GetData parsed={parsed}/>}</div>}
         </main>
       </div>
     </div>
