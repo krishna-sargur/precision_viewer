@@ -563,7 +563,7 @@ const GetData = ({ parsed }) => {
   const [precisionRecs, setPrecisionRecs] = useState<Record<string,string[]>>({});
 
   useEffect(() => {
-    fetch(`${BASE}/api/precision/recordings`)
+    fetch(`${BASE}/precision_recordings.json`)
       .then((r) => r.json())
       .then((d) => { if (d.available) setPrecisionRecs(d.recordings ?? {}); })
       .catch(() => {});
@@ -869,11 +869,15 @@ export default function PatientRaveGui() {
 
   const [raveDir, setRaveDir] = useState<any>(null);
   const [serverRaveAvailable, setServerRaveAvailable] = useState<boolean | null>(null);
+  const [raveManifestFiles, setRaveManifestFiles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    fetch(`${BASE}/api/rave/check`)
+    fetch(`${BASE}/rave_manifest.json`)
       .then((r) => r.json())
-      .then((d) => setServerRaveAvailable(d.available === true))
+      .then((d) => {
+        setServerRaveAvailable(d.available === true);
+        setRaveManifestFiles(new Set(d.files ?? []));
+      })
       .catch(() => setServerRaveAvailable(false));
   }, []);
 
@@ -894,8 +898,8 @@ export default function PatientRaveGui() {
     if (!p||!p.raveName) { setRaveUrl(""); return; }
     // Manual blob override always wins
     if (raveBlobs[p.raveName]) { setRaveUrl(raveBlobs[p.raveName]); return; }
-    // Server RAVE folder
-    if (serverRaveAvailable) { setRaveUrl(`${BASE}/api/rave/file?name=${encodeURIComponent(p.raveName)}`); return; }
+    // Static RAVE files baked into out/rave/ at build time
+    if (serverRaveAvailable && raveManifestFiles.has(p.raveName)) { setRaveUrl(`${BASE}/rave/${encodeURIComponent(p.raveName)}`); return; }
     // Local folder picker fallback
     if (raveDir) {
       (async () => {
@@ -913,7 +917,7 @@ export default function PatientRaveGui() {
       return;
     }
     setRaveUrl("");
-  }, [selId, parsed, raveBlobs, raveDir, serverRaveAvailable]);
+  }, [selId, parsed, raveBlobs, raveDir, serverRaveAvailable, raveManifestFiles]);
 
   const patientList = useMemo(() => {
     if (!parsed) return [];
@@ -988,7 +992,7 @@ export default function PatientRaveGui() {
             ) : (
               <div style={{ flex:1, overflowY:"auto", padding:"8px 10px" }}>
                 {patientList.map((p) => (
-                  <SideItem key={p.caseId} p={p} active={selId===p.caseId} hasRave={!!raveBlobs[p.raveName] || (serverRaveAvailable === true && !!p.raveName)}
+                  <SideItem key={p.caseId} p={p} active={selId===p.caseId} hasRave={!!raveBlobs[p.raveName] || raveManifestFiles.has(p.raveName)}
                     onClick={() => { setSelId(p.caseId); contentRef.current?.scrollTo({top:0,behavior:"smooth"}); }}/>
                 ))}
               </div>
