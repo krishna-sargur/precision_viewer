@@ -442,9 +442,8 @@ const BrainAtlasViewer = ({ patients }) => {
   const [visible, setVisible] = React.useState({});
   const [status, setStatus] = React.useState("idle");
   const sceneRef = React.useRef(null);
-  const dotMeshes = React.useRef({});
+  const groupMeshes = React.useRef({});
 
-  const ptList = patients ?? [];
   const colorOf = (idx) => ATLAS_COLORS[idx % ATLAS_COLORS.length];
 
   React.useEffect(() => {
@@ -476,7 +475,7 @@ const BrainAtlasViewer = ({ patients }) => {
         if (cancelled) return;
 
         const W = mountRef.current.clientWidth || 800;
-        const H = 500;
+        const H = 520;
         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(W, H);
         renderer.setPixelRatio(window.devicePixelRatio);
@@ -485,45 +484,86 @@ const BrainAtlasViewer = ({ patients }) => {
         const scene = new THREE.Scene();
         sceneRef.current = scene;
         const camera = new THREE.PerspectiveCamera(45, W / H, 1, 2000);
-        camera.position.set(0, 0, 280);
+        camera.position.set(0, 90, 255);
+        camera.lookAt(0, 0, 0);
 
-        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-        const dl = new THREE.DirectionalLight(0xffffff, 0.8);
-        dl.position.set(1, 1, 1);
+        scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.7);
+        dl.position.set(1, 1, 0.5);
         scene.add(dl);
+        const dl2 = new THREE.DirectionalLight(0xffffff, 0.3);
+        dl2.position.set(-1, -0.5, -1);
+        scene.add(dl2);
 
-        const makeMesh = (buf) => {
-          const dv = new DataView(buf);
-          const nV = dv.getInt32(0, true), nF = dv.getInt32(4, true);
-          const verts = new Float32Array(buf, 8, nV * 3);
-          const faces = new Int32Array(buf, 8 + nV * 12, nF * 3);
-          const geo = new THREE.BufferGeometry();
-          geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
-          geo.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
-          geo.computeVertexNormals();
-          return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0xe8dcc8, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+        // Apply same coordinate convention as electrodes: FS/MNI (x,y,z) → THREE (-x, z, -y)
+        const applyTransform = (verts) => {
+          for (let i = 0; i < verts.length; i += 3) {
+            const x = verts[i], y = verts[i + 1], z = verts[i + 2];
+            verts[i] = -x; verts[i + 1] = z; verts[i + 2] = -y;
+          }
         };
 
-        scene.add(makeMesh(lhBuf));
-        const rh = makeMesh(rhBuf);
-        rh.geometry.attributes.position.array.forEach((_, i) => { if (i % 3 === 0) rh.geometry.attributes.position.array[i] *= -1; });
-        rh.geometry.attributes.position.needsUpdate = true;
-        rh.geometry.computeVertexNormals();
-        scene.add(rh);
+        const makeBrainMesh = (buf) => {
+          const dv = new DataView(buf);
+          const nV = dv.getInt32(0, true), nF = dv.getInt32(4, true);
+          const verts = new Float32Array(buf, 8, nV * 3).slice();
+          const faces = new Uint32Array(buf, 8 + nV * 12, nF * 3).slice();
+          applyTransform(verts);
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+          geo.setIndex(new THREE.BufferAttribute(faces, 1));
+          geo.computeVertexNormals();
+          return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0xd8ccbc, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+        };
+
+        scene.add(makeBrainMesh(lhBuf));
+        scene.add(makeBrainMesh(rhBuf));
 
         const initVis = {};
-        const newMeshes = {};
+        const newGroups = {};
         Object.entries(electrodeData).forEach(([subj, coords], si) => {
-          const color = new THREE.Color(colorOf(si));
-          const geo = new THREE.BufferGeometry();
-          const pos = new Float32Array(coords.flatMap(([x, y, z]) => [-x, z, -y]));
-          geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-          const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color, size: 2.5, sizeAttenuation: true }));
-          scene.add(pts);
-          newMeshes[subj] = pts;
+          const colorHex = colorOf(si);
+          const color = new THREE.Color(colorHex);
+          const group = new THREE.Group();
+          const n = coords.length;
+
+          // Build 32×32 grid surface mesh (YAEL exports electrodes in row-major array order)
+          const nCols = Math.round(Math.sqrt(n));
+          const nRows = Math.floor(n / nCols);
+          const total = nRows * nCols;
+
+          if (total >= 4) {
+            const verts = new Float32Array(total * 3);
+            for (let i = 0; i < total; i++) {
+              const [x, y, z] = coords[i];
+              verts[i * 3] = -x; verts[i * 3 + 1] = z; verts[i * 3 + 2] = -y;
+            }
+            const indices = [];
+            for (let r = 0; r < nRows - 1; r++) {
+              for (let c = 0; c < nCols - 1; c++) {
+                const i = r * nCols + c;
+                indices.push(i, i + 1, i + nCols, i + 1, i + nCols + 1, i + nCols);
+              }
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+            geo.setIndex(indices);
+            geo.computeVertexNormals();
+            group.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color, transparent: true, opacity: 0.72, side: THREE.DoubleSide })));
+          }
+
+          // Overlay individual electrode markers
+          const pos = new Float32Array(n * 3);
+          coords.forEach(([x, y, z], i) => { pos[i * 3] = -x; pos[i * 3 + 1] = z; pos[i * 3 + 2] = -y; });
+          const dotGeo = new THREE.BufferGeometry();
+          dotGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          group.add(new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.0, sizeAttenuation: true, transparent: true, opacity: 0.55 })));
+
+          scene.add(group);
+          newGroups[subj] = group;
           initVis[subj] = true;
         });
-        dotMeshes.current = newMeshes;
+        groupMeshes.current = newGroups;
         setVisible(initVis);
 
         let isDragging = false, prevX = 0, prevY = 0;
@@ -537,7 +577,7 @@ const BrainAtlasViewer = ({ patients }) => {
           prevX = e.clientX; prevY = e.clientY;
         });
         el.addEventListener("mouseup", () => { isDragging = false; });
-        el.addEventListener("wheel", e => { camera.position.z = Math.max(100, Math.min(600, camera.position.z + e.deltaY * 0.3)); });
+        el.addEventListener("wheel", e => { e.preventDefault(); camera.position.z = Math.max(80, Math.min(600, camera.position.z + e.deltaY * 0.3)); }, { passive: false });
 
         const animate = () => { animId = requestAnimationFrame(animate); renderer.render(scene, camera); };
         animate();
@@ -547,14 +587,18 @@ const BrainAtlasViewer = ({ patients }) => {
       }
     };
     init();
-    return () => { cancelled = true; if (animId) cancelAnimationFrame(animId); if (renderer) { renderer.dispose(); mountRef.current?.removeChild(renderer.domElement); } };
+    return () => {
+      cancelled = true;
+      if (animId) cancelAnimationFrame(animId);
+      if (renderer) { renderer.dispose(); if (mountRef.current && renderer.domElement.parentNode === mountRef.current) mountRef.current.removeChild(renderer.domElement); }
+    };
   }, []);
 
   React.useEffect(() => {
-    Object.entries(dotMeshes.current).forEach(([subj, mesh]) => { mesh.visible = visible[subj] ?? true; });
+    Object.entries(groupMeshes.current).forEach(([subj, grp]) => { grp.visible = visible[subj] ?? true; });
   }, [visible]);
 
-  const subjects = Object.keys(dotMeshes.current).length > 0 ? Object.keys(dotMeshes.current) : Object.keys(visible);
+  const subjects = Object.keys(groupMeshes.current).length > 0 ? Object.keys(groupMeshes.current) : Object.keys(visible);
 
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
@@ -571,7 +615,7 @@ const BrainAtlasViewer = ({ patients }) => {
           );
         })}
       </div>
-      <div ref={mountRef} style={{ width: "100%", height: 500, background: "#1a1510", cursor: "grab" }} />
+      <div ref={mountRef} style={{ width: "100%", height: 520, background: "#1a1510", cursor: "grab" }} />
       <div style={{ padding: "6px 16px", borderTop: `1px solid ${T.border}`, fontSize: 11, color: T.inkFainter, fontFamily: "'Source Code Pro',monospace" }}>
         drag to rotate · scroll to zoom
       </div>
