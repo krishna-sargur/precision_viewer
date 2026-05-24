@@ -476,7 +476,8 @@ const BrainAtlasViewer = ({ patients }) => {
 
         const W = mountRef.current.clientWidth || 800;
         const H = 520;
-        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setClearColor(0xffffff, 1);
         renderer.setSize(W, H);
         renderer.setPixelRatio(window.devicePixelRatio);
         mountRef.current.appendChild(renderer.domElement);
@@ -681,7 +682,7 @@ const BrainAtlasViewer = ({ patients }) => {
           );
         })}
       </div>
-      <div ref={mountRef} style={{ width: "100%", height: 520, background: "#1a1510", cursor: "grab" }} />
+      <div ref={mountRef} style={{ width: "100%", height: 520, background: "#ffffff", cursor: "grab" }} />
       <div style={{ padding: "6px 16px", borderTop: `1px solid ${T.border}`, fontSize: 11, color: T.inkFainter, fontFamily: "'Source Code Pro',monospace" }}>
         drag to rotate · scroll to zoom
       </div>
