@@ -514,12 +514,15 @@ const BrainAtlasViewer = ({ patients }) => {
           geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
           geo.setIndex(new THREE.BufferAttribute(faces, 1));
           geo.computeVertexNormals();
-          const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-            color: 0xc8c2bc, specular: 0x444444, shininess: 25,
-            transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false,
+          return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+            color: 0xc0bab4,
+            specular: 0x282828,
+            shininess: 18,
+            side: THREE.DoubleSide,
+            polygonOffset: true,
+            polygonOffsetFactor: 2,
+            polygonOffsetUnits: 2,
           }));
-          mesh.renderOrder = 0;
-          return mesh;
         };
 
         scene.add(makeBrainMesh(lhBuf));
