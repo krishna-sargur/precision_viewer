@@ -435,6 +435,150 @@ const TargetsBrowse = ({ parsed }) => {
   );
 };
 
+const ATLAS_COLORS = ["#c4956a","#5a8a5a","#6a7ec4","#c46a6a","#9a6ac4","#6ac4b8","#c4b86a","#c46aa0","#6a9ac4","#a0c46a","#c4826a","#6ac47e","#c4c46a","#826ac4","#6ac4c4"];
+
+const BrainAtlasViewer = ({ patients }) => {
+  const mountRef = React.useRef(null);
+  const [visible, setVisible] = React.useState({});
+  const [status, setStatus] = React.useState("idle");
+  const sceneRef = React.useRef(null);
+  const dotMeshes = React.useRef({});
+
+  const ptList = patients ?? [];
+  const colorOf = (idx) => ATLAS_COLORS[idx % ATLAS_COLORS.length];
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    let cancelled = false;
+    let renderer, animId;
+
+    const init = async () => {
+      setStatus("loading");
+      try {
+        const THREE = await import("three");
+
+        const loadBin = async (url) => {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(`${url} → ${r.status}`);
+          return r.arrayBuffer();
+        };
+
+        const [lhBuf, rhBuf] = await Promise.all([
+          loadBin(`${BASE}/atlas/lh_pial.bin`),
+          loadBin(`${BASE}/atlas/rh_pial.bin`),
+        ]);
+
+        const electrodeData = await fetch(`${BASE}/atlas/electrode_mni152.json`).then(r => {
+          if (!r.ok) throw new Error("electrode_mni152.json not found");
+          return r.json();
+        });
+
+        if (cancelled) return;
+
+        const W = mountRef.current.clientWidth || 800;
+        const H = 500;
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(W, H);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        mountRef.current.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        sceneRef.current = scene;
+        const camera = new THREE.PerspectiveCamera(45, W / H, 1, 2000);
+        camera.position.set(0, 0, 280);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+        const dl = new THREE.DirectionalLight(0xffffff, 0.8);
+        dl.position.set(1, 1, 1);
+        scene.add(dl);
+
+        const makeMesh = (buf) => {
+          const dv = new DataView(buf);
+          const nV = dv.getInt32(0, true), nF = dv.getInt32(4, true);
+          const verts = new Float32Array(buf, 8, nV * 3);
+          const faces = new Int32Array(buf, 8 + nV * 12, nF * 3);
+          const geo = new THREE.BufferGeometry();
+          geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
+          geo.setIndex(new THREE.BufferAttribute(new Uint32Array(faces), 1));
+          geo.computeVertexNormals();
+          return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0xe8dcc8, transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+        };
+
+        scene.add(makeMesh(lhBuf));
+        const rh = makeMesh(rhBuf);
+        rh.geometry.attributes.position.array.forEach((_, i) => { if (i % 3 === 0) rh.geometry.attributes.position.array[i] *= -1; });
+        rh.geometry.attributes.position.needsUpdate = true;
+        rh.geometry.computeVertexNormals();
+        scene.add(rh);
+
+        const initVis = {};
+        const newMeshes = {};
+        Object.entries(electrodeData).forEach(([subj, coords], si) => {
+          const color = new THREE.Color(colorOf(si));
+          const geo = new THREE.BufferGeometry();
+          const pos = new Float32Array(coords.flatMap(([x, y, z]) => [-x, z, -y]));
+          geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color, size: 2.5, sizeAttenuation: true }));
+          scene.add(pts);
+          newMeshes[subj] = pts;
+          initVis[subj] = true;
+        });
+        dotMeshes.current = newMeshes;
+        setVisible(initVis);
+
+        let isDragging = false, prevX = 0, prevY = 0;
+        const el = renderer.domElement;
+        el.addEventListener("mousedown", e => { isDragging = true; prevX = e.clientX; prevY = e.clientY; });
+        el.addEventListener("mousemove", e => {
+          if (!isDragging) return;
+          const dx = e.clientX - prevX, dy = e.clientY - prevY;
+          scene.rotation.y += dx * 0.008;
+          scene.rotation.x += dy * 0.008;
+          prevX = e.clientX; prevY = e.clientY;
+        });
+        el.addEventListener("mouseup", () => { isDragging = false; });
+        el.addEventListener("wheel", e => { camera.position.z = Math.max(100, Math.min(600, camera.position.z + e.deltaY * 0.3)); });
+
+        const animate = () => { animId = requestAnimationFrame(animate); renderer.render(scene, camera); };
+        animate();
+        setStatus("ready");
+      } catch (e) {
+        if (!cancelled) setStatus("error:" + e.message);
+      }
+    };
+    init();
+    return () => { cancelled = true; if (animId) cancelAnimationFrame(animId); if (renderer) { renderer.dispose(); mountRef.current?.removeChild(renderer.domElement); } };
+  }, []);
+
+  React.useEffect(() => {
+    Object.entries(dotMeshes.current).forEach(([subj, mesh]) => { mesh.visible = visible[subj] ?? true; });
+  }, [visible]);
+
+  const subjects = Object.keys(dotMeshes.current).length > 0 ? Object.keys(dotMeshes.current) : Object.keys(visible);
+
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 28 }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        {status === "loading" && <span style={{ fontSize: 12, color: T.inkFaint, fontFamily: "'Source Code Pro',monospace" }}>Loading atlas…</span>}
+        {status.startsWith("error") && <span style={{ fontSize: 12, color: T.bad }}>Atlas files not found — run generate_atlas_data.py and redeploy</span>}
+        {subjects.map((subj, si) => {
+          const on = visible[subj] ?? true;
+          return (
+            <button key={subj} onClick={() => setVisible(v => ({ ...v, [subj]: !on }))}
+              style={{ padding: "3px 10px", borderRadius: 20, border: `1px solid ${on ? colorOf(si) : T.border}`, background: on ? colorOf(si) : "transparent", color: on ? "#fff" : T.inkFaint, fontSize: 11.5, fontFamily: "'Source Code Pro',monospace", cursor: "pointer", transition: "all 0.15s" }}>
+              {subj}
+            </button>
+          );
+        })}
+      </div>
+      <div ref={mountRef} style={{ width: "100%", height: 500, background: "#1a1510", cursor: "grab" }} />
+      <div style={{ padding: "6px 16px", borderTop: `1px solid ${T.border}`, fontSize: 11, color: T.inkFainter, fontFamily: "'Source Code Pro',monospace" }}>
+        drag to rotate · scroll to zoom
+      </div>
+    </div>
+  );
+};
+
 const Overview = ({ parsed }) => {
   const {patients,stats,allTargets,byTarget,taskGroupMap,byTask} = parsed;
   return (
@@ -450,6 +594,8 @@ const Overview = ({ parsed }) => {
           </div>
         ))}
       </div>
+      <Divider label="Electrode Atlas" />
+      <BrainAtlasViewer patients={patients} />
       <Divider label="DBS targets" />
       <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginBottom:28 }}>
         {allTargets.map((t) => { const tpts=byTarget[t]??[]; const cc=tpts.reduce((a,p)=>{a[p.condition||"?"]=(a[p.condition||"?"]??0)+1;return a;},{}); return (
