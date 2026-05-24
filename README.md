@@ -1,6 +1,6 @@
 # Precision Viewer
 
-A Next.js dashboard for the Pesaran Lab's Precision BCI patient cohort. Displays pipeline status, RAVE reconstructions, precision recordings, and a multi-patient 3D electrode atlas.
+A Next.js dashboard for the Restore Lab's Precision BCI patient cohort. Displays pipeline status, RAVE reconstructions, precision recordings, and a multi-patient 3D electrode atlas.
 
 ---
 
@@ -29,17 +29,6 @@ cd /opt/precision_viewer && \
   echo "Done"
 ```
 
-### What each step does
-
-| Step | Why |
-|------|-----|
-| `git reset --hard origin/main` | Pull latest code from GitHub |
-| `sed -i ... output: "export"` | Temporarily inject static-export mode into `next.config.ts` (not kept in git so API routes work in dev) |
-| `mv app/api /tmp/...` | Remove API route directory — Next.js static export fails if any API routes exist |
-| `npm ci && npm run build` | `npm run build` runs `scripts/bake-static-data.js` first (copies RAVE files, atlas, precision recordings from `/vol/brains/`) then calls `next build` which outputs to `out/` |
-| `mv /tmp/... app/api` | Restore API routes for future dev use |
-| `sed -i ... output: "export"` (second) | Remove the injected export line so `next.config.ts` stays clean in git |
-| `chmod -R o+rX out/` | Make `out/` readable by Apache (`www-data`) |
 
 ### Notes
 
