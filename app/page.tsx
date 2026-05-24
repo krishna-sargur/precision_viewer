@@ -495,7 +495,8 @@ const BrainAtlasViewer = ({ patients }) => {
         dl2.position.set(-1, -0.5, -1);
         scene.add(dl2);
 
-        // Apply same coordinate convention as electrodes: FS/MNI (x,y,z) → THREE (-x, z, -y)
+        // Coordinate transform: FS/MNI (x,y,z) → THREE (-x, z, -y)
+        const tfm = (x, y, z) => [-x, z, -y];
         const applyTransform = (verts) => {
           for (let i = 0; i < verts.length; i += 3) {
             const x = verts[i], y = verts[i + 1], z = verts[i + 2];
@@ -513,54 +514,116 @@ const BrainAtlasViewer = ({ patients }) => {
           geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
           geo.setIndex(new THREE.BufferAttribute(faces, 1));
           geo.computeVertexNormals();
-          return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color: 0xd8ccbc, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false }));
+          const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
+            color: 0xc8c2bc, specular: 0x444444, shininess: 25,
+            transparent: true, opacity: 0.72, side: THREE.DoubleSide, depthWrite: false,
+          }));
+          mesh.renderOrder = 0;
+          return mesh;
         };
 
         scene.add(makeBrainMesh(lhBuf));
         scene.add(makeBrainMesh(rhBuf));
 
+        // Helpers for PCA-based convex hull per electrode array
+        const mv3 = (M, v) => [M[0]*v[0]+M[1]*v[1]+M[2]*v[2], M[3]*v[0]+M[4]*v[1]+M[5]*v[2], M[6]*v[0]+M[7]*v[1]+M[8]*v[2]];
+        const dot3 = (a, b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+        const nrm3 = (v) => { const l = Math.sqrt(dot3(v, v)); return l > 0 ? [v[0]/l, v[1]/l, v[2]/l] : [1, 0, 0]; };
+
+        const makeArrayGroup = (coords, colorHex) => {
+          const grp = new THREE.Group();
+          const n = coords.length;
+
+          // Centroid
+          let mx = 0, my = 0, mz = 0;
+          for (const [x, y, z] of coords) { mx += x; my += y; mz += z; }
+          mx /= n; my /= n; mz /= n;
+
+          // 3×3 covariance (flat row-major)
+          const C = new Array(9).fill(0);
+          for (const [x, y, z] of coords) {
+            const d = [x-mx, y-my, z-mz];
+            for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) C[i*3+j] += d[i]*d[j];
+          }
+
+          // Power iteration for first principal axis
+          let e1 = nrm3([1, 0.1, 0.05]);
+          for (let i = 0; i < 200; i++) e1 = nrm3(mv3(C, e1));
+
+          // Deflate and find second principal axis
+          const l1 = dot3(e1, mv3(C, e1));
+          const C2 = C.map((v, k) => v - l1 * e1[Math.floor(k/3)] * e1[k%3]);
+          let e2 = nrm3([0.05, 1, 0.1]);
+          for (let i = 0; i < 200; i++) e2 = nrm3(mv3(C2, e2));
+          // Gram-Schmidt: ensure e2 ⊥ e1
+          const d12 = dot3(e2, e1);
+          e2 = nrm3([e2[0]-d12*e1[0], e2[1]-d12*e1[1], e2[2]-d12*e1[2]]);
+
+          // Project all electrodes onto (e1, e2) plane
+          const proj = coords.map(([x, y, z]) => {
+            const d = [x-mx, y-my, z-mz];
+            return [dot3(d, e1), dot3(d, e2)];
+          });
+
+          // Andrew's monotone chain convex hull in 2D
+          const sorted = proj.map((p, i) => [p[0], p[1], i]).sort((a, b) => a[0]-b[0] || a[1]-b[1]);
+          const cx2 = (O, A, B) => (A[0]-O[0])*(B[1]-O[1]) - (A[1]-O[1])*(B[0]-O[0]);
+          const hull = [];
+          for (const p of sorted) {
+            while (hull.length >= 2 && cx2(hull[hull.length-2], hull[hull.length-1], p) <= 0) hull.pop();
+            hull.push(p);
+          }
+          const lo = hull.length + 1;
+          for (let i = sorted.length - 2; i >= 0; i--) {
+            while (hull.length >= lo && cx2(hull[hull.length-2], hull[hull.length-1], sorted[i]) <= 0) hull.pop();
+            hull.push(sorted[i]);
+          }
+          hull.pop();
+
+          // Fan-triangulate convex hull polygon from centroid
+          const nh = hull.length;
+          const pVerts = new Float32Array((nh + 1) * 3);
+          const [cx3, cy3, cz3] = tfm(mx, my, mz);
+          pVerts[0] = cx3; pVerts[1] = cy3; pVerts[2] = cz3;
+          hull.forEach(([u, v], i) => {
+            const x = mx + u*e1[0] + v*e2[0], y = my + u*e1[1] + v*e2[1], z = mz + u*e1[2] + v*e2[2];
+            const [tx, ty, tz] = tfm(x, y, z);
+            pVerts[(i+1)*3] = tx; pVerts[(i+1)*3+1] = ty; pVerts[(i+1)*3+2] = tz;
+          });
+          const pIdx = [];
+          for (let i = 0; i < nh; i++) pIdx.push(0, i+1, (i+1)%nh + 1);
+          const pGeo = new THREE.BufferGeometry();
+          pGeo.setAttribute("position", new THREE.BufferAttribute(pVerts, 3));
+          pGeo.setIndex(pIdx);
+          pGeo.computeVertexNormals();
+          const patch = new THREE.Mesh(pGeo, new THREE.MeshPhongMaterial({
+            color: new THREE.Color(colorHex), transparent: true, opacity: 0.78,
+            side: THREE.DoubleSide, depthWrite: false,
+          }));
+          patch.renderOrder = 1;
+          grp.add(patch);
+
+          // Individual electrode dots
+          const pos = new Float32Array(n * 3);
+          coords.forEach(([x, y, z], i) => {
+            const [tx, ty, tz] = tfm(x, y, z);
+            pos[i*3] = tx; pos[i*3+1] = ty; pos[i*3+2] = tz;
+          });
+          const dotGeo = new THREE.BufferGeometry();
+          dotGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+          const dots = new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.0, sizeAttenuation: true, transparent: true, opacity: 0.5 }));
+          dots.renderOrder = 2;
+          grp.add(dots);
+
+          return grp;
+        };
+
         const initVis = {};
         const newGroups = {};
         Object.entries(electrodeData).forEach(([subj, coords], si) => {
-          const colorHex = colorOf(si);
-          const color = new THREE.Color(colorHex);
-          const group = new THREE.Group();
-          const n = coords.length;
-
-          // Build 32×32 grid surface mesh (YAEL exports electrodes in row-major array order)
-          const nCols = Math.round(Math.sqrt(n));
-          const nRows = Math.floor(n / nCols);
-          const total = nRows * nCols;
-
-          if (total >= 4) {
-            const verts = new Float32Array(total * 3);
-            for (let i = 0; i < total; i++) {
-              const [x, y, z] = coords[i];
-              verts[i * 3] = -x; verts[i * 3 + 1] = z; verts[i * 3 + 2] = -y;
-            }
-            const indices = [];
-            for (let r = 0; r < nRows - 1; r++) {
-              for (let c = 0; c < nCols - 1; c++) {
-                const i = r * nCols + c;
-                indices.push(i, i + 1, i + nCols, i + 1, i + nCols + 1, i + nCols);
-              }
-            }
-            const geo = new THREE.BufferGeometry();
-            geo.setAttribute("position", new THREE.BufferAttribute(verts, 3));
-            geo.setIndex(indices);
-            geo.computeVertexNormals();
-            group.add(new THREE.Mesh(geo, new THREE.MeshPhongMaterial({ color, transparent: true, opacity: 0.72, side: THREE.DoubleSide })));
-          }
-
-          // Overlay individual electrode markers
-          const pos = new Float32Array(n * 3);
-          coords.forEach(([x, y, z], i) => { pos[i * 3] = -x; pos[i * 3 + 1] = z; pos[i * 3 + 2] = -y; });
-          const dotGeo = new THREE.BufferGeometry();
-          dotGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-          group.add(new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.0, sizeAttenuation: true, transparent: true, opacity: 0.55 })));
-
-          scene.add(group);
-          newGroups[subj] = group;
+          const grp = makeArrayGroup(coords, colorOf(si));
+          scene.add(grp);
+          newGroups[subj] = grp;
           initVis[subj] = true;
         });
         groupMeshes.current = newGroups;
