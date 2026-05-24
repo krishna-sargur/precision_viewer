@@ -516,8 +516,8 @@ const BrainAtlasViewer = ({ patients }) => {
           geo.setIndex(new THREE.BufferAttribute(faces, 1));
           geo.computeVertexNormals();
           return new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-            color: 0xc0bab4,
-            specular: 0x282828,
+            color: 0xd4d0cc,
+            specular: 0x686460,
             shininess: 18,
             side: THREE.DoubleSide,
             polygonOffset: true,
