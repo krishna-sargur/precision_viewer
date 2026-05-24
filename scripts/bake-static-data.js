@@ -29,6 +29,20 @@ if (fs.existsSync(RAVE_DIR)) {
   console.log("[bake] RAVE directory not found — skipping");
 }
 
+// --- Atlas files (brain mesh + electrode coordinates) ---
+const ATLAS_SRC = path.join(RAVE_DIR, "atlas");
+const atlasOut  = path.join(PUBLIC, "atlas");
+if (fs.existsSync(ATLAS_SRC)) {
+  fs.mkdirSync(atlasOut, { recursive: true });
+  const files = fs.readdirSync(ATLAS_SRC);
+  for (const file of files) {
+    fs.copyFileSync(path.join(ATLAS_SRC, file), path.join(atlasOut, file));
+  }
+  console.log(`[bake] Copied ${files.length} atlas file(s) → public/atlas/`);
+} else {
+  console.log("[bake] Atlas directory not found — skipping");
+}
+
 // --- Precision recordings ---
 if (fs.existsSync(PRECISION_JSON)) {
   const json = JSON.parse(fs.readFileSync(PRECISION_JSON, "utf-8"));
