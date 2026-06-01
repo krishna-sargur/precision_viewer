@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 
-const RAVE_DIR = "/vol/brains/bd1/restorelab/RAVE_Reconstructions";
+const RAVE_DIR = "/bdz/restorelab/RAVE_Reconstructions";
 
 export function GET() {
   try {

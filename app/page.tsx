@@ -859,8 +859,8 @@ const GetData = ({ parsed }) => {
 
     L.push("import numpy as np", "import matlab.engine", "");
     L.push("eng = matlab.engine.start_matlab()");
-    L.push("eng.addpath(eng.genpath('/vol/brains/bd1/restorelab/Precision_Data/preproc_env/Krishna/Functions'), nargout=0)");
-    L.push("eng.addpath('/vol/brains/bd1/restorelab/Precision_Data/matlab', nargout=0)");
+    L.push("eng.addpath(eng.genpath('/bdz/restorelab/Precision_Data/preproc_env/Krishna/Functions'), nargout=0)");
+    L.push("eng.addpath('/bdz/restorelab/Precision_Data/matlab', nargout=0)");
     L.push("");
     L.push("out = eng.fetch_precision_data('import',");
     L.push("                              'pt_id', " + ptNum + ",");
@@ -934,8 +934,8 @@ const GetData = ({ parsed }) => {
     const tp = "out.pt" + ptNum + "." + recName;
     const L = [];
 
-    L.push("addpath(genpath('/vol/brains/bd1/restorelab/Precision_Data/preproc_env/Krishna/Functions'));");
-    L.push("addpath('/vol/brains/bd1/restorelab/Precision_Data/matlab');");
+    L.push("addpath(genpath('/bdz/restorelab/Precision_Data/preproc_env/Krishna/Functions'));");
+    L.push("addpath('/bdz/restorelab/Precision_Data/matlab');");
     L.push("");
     L.push("out = fetch_precision_data('import', ...");
     L.push("                          'pt_id', " + ptNum + ", ...");

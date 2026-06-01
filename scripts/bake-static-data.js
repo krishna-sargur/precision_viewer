@@ -4,8 +4,8 @@
 const fs   = require("fs");
 const path = require("path");
 
-const RAVE_DIR       = "/vol/brains/bd1/restorelab/RAVE_Reconstructions";
-const PRECISION_JSON = "/vol/brains/bd1/restorelab/Precision_Data/precision_list.json";
+const RAVE_DIR       = "/bdz/restorelab/RAVE_Reconstructions";
+const PRECISION_JSON = "/bdz/restorelab/Precision_Data/precision_list.json";
 const PUBLIC         = path.join(__dirname, "..", "public");
 
 // --- RAVE files ---

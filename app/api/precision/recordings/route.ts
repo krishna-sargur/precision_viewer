@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs";
 
-const JSON_PATH = "/vol/brains/bd1/restorelab/Precision_Data/precision_list.json";
+const JSON_PATH = "/bdz/restorelab/Precision_Data/precision_list.json";
 
 export function GET() {
   try {
