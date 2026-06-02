@@ -801,13 +801,19 @@ const VARIABLE_OPTIONS = [
   { key:"ecog",              label:"ECoG matrix",       group:"ECoG",       desc:'pt{n}_ecog_np  — shape (C, T)' },
   { key:"channels",          label:"Channel list",      group:"ECoG",       desc:'ch_hw  — hardware IDs per row' },
   { key:"bad_channels",      label:"Bad channels",      group:"ECoG",       desc:'bad_hw  — flagged > 2 MΩ' },
-  { key:"verified_timings",  label:"Verified timings",  group:"Behavioral", desc:'verified_timings' },
+  { key:"verified_timings",  label:"Verified timings",  group:"Behavioral", desc:'verified_timings  — [N × 2]' },
   { key:"transition_labels", label:"Transition labels", group:"Behavioral", desc:'filtVisualTransitionLabels' },
-  { key:"body_position",     label:"Body position",     group:"Kinematics", desc:'body, body_x/y/z' },
+  { key:"visual_cue_times",  label:"Visual cue times",  group:"Behavioral", desc:'filtVisualCueTimes' },
+  { key:"visual_cue_labels", label:"Visual cue labels", group:"Behavioral", desc:'filtVisualCueLabels' },
+  { key:"sound_cues",        label:"Sound cues",        group:"Behavioral", desc:'filtSound' },
+  { key:"body_position",     label:"Body position",     group:"Kinematics", desc:'body, body_x/y/z  — [3 × T × J]' },
+  { key:"hand_position",     label:"Hand position",     group:"Kinematics", desc:'hands  — [3 × T × H]' },
   { key:"timestamps",        label:"Timestamps",        group:"Kinematics", desc:'t_hand, t_body' },
+  { key:"emg",               label:"EMG signal",        group:"EMG",        desc:'emg_sig, t_emg per node', ptOnly:15 },
+  { key:"emg_accel",         label:"EMG accelerometer", group:"EMG",        desc:'emg_accx/y/z, t_acc per node', ptOnly:15 },
 ];
 
-const DEFAULT_VARS = { ecog:true, channels:true, bad_channels:true, verified_timings:false, transition_labels:false, body_position:false, timestamps:false };
+const DEFAULT_VARS = { ecog:true, channels:true, bad_channels:true, verified_timings:false, transition_labels:false, visual_cue_times:false, visual_cue_labels:false, sound_cues:false, body_position:false, hand_position:false, timestamps:false, emg:false, emg_accel:false };
 
 const GetData = ({ parsed }) => {
   const firstId = parsed.patients[0]?.caseId ?? "";
@@ -815,8 +821,10 @@ const GetData = ({ parsed }) => {
   const [selTask, setSelTask] = useState("");
   const [recName, setRecName] = useState("");
   const [vars,    setVars]    = useState(DEFAULT_VARS);
-  const [copied,       setCopied]       = useState(false);
-  const [lang,         setLang]         = useState("python");
+  const [copied,        setCopied]        = useState(false);
+  const [lang,          setLang]          = useState("python");
+  const [precision,     setPrecision]     = useState("auto");
+  const [rawEcog,       setRawEcog]       = useState(false);
   const [precisionRecs, setPrecisionRecs] = useState<Record<string,string[]>>({});
 
   useEffect(() => {
@@ -855,6 +863,7 @@ const GetData = ({ parsed }) => {
     if (!Object.values(vars).some(Boolean)) return "# Select at least one variable below";
 
     const tp = "out.pt" + ptNum + "." + recName;
+    const hasEmg = (vars.emg || vars.emg_accel) && ptNum === 15;
     const L = [];
 
     L.push("import numpy as np", "import matlab.engine", "");
@@ -862,9 +871,12 @@ const GetData = ({ parsed }) => {
     L.push("eng.addpath(eng.genpath('/bdz/restorelab/Precision_Data/preproc_env/Krishna/Functions'), nargout=0)");
     L.push("eng.addpath('/bdz/restorelab/Precision_Data/matlab', nargout=0)");
     L.push("");
-    L.push("out = eng.fetch_precision_data('import',");
+    L.push("out = eng.fetchPrecisionData('import',");
     L.push("                              'pt_id', " + ptNum + ",");
     L.push("                              'rec_names', ['" + recName + "'],");
+    if (rawEcog)              L.push("                              'raw_ecog', True,");
+    if (precision !== "auto") L.push("                              'precision', '" + precision + "',");
+    if (hasEmg)               L.push("                              'emg', True,");
     L.push("                               nargout=1)");
     L.push("", "eng.workspace['out'] = out");
 
@@ -887,7 +899,7 @@ const GetData = ({ parsed }) => {
     if (vars.verified_timings) {
       L.push("");
       L.push("eng.eval(\"vt = " + tp + ".verified_timings;\", nargout=0)");
-      L.push("verified_timings = np.array(eng.workspace['vt'])");
+      L.push("verified_timings = np.array(eng.workspace['vt'])  # [N x 2]");
     }
 
     if (vars.transition_labels) {
@@ -896,14 +908,36 @@ const GetData = ({ parsed }) => {
       L.push("transition_labels = np.array(eng.workspace['tl']).ravel()");
     }
 
-    if (vars.body_position || vars.timestamps) {
+    if (vars.visual_cue_times) {
+      L.push("");
+      L.push("eng.eval(\"vct = " + tp + ".filtVisualCueTimes;\", nargout=0)");
+      L.push("visual_cue_times = np.array(eng.workspace['vct']).ravel()");
+    }
+
+    if (vars.visual_cue_labels) {
+      L.push("");
+      L.push("eng.eval(\"vcl = " + tp + ".filtVisualCueLabels;\", nargout=0)");
+      L.push("visual_cue_labels = np.array(eng.workspace['vcl']).ravel()");
+    }
+
+    if (vars.sound_cues) {
+      L.push("");
+      L.push("eng.eval(\"sc = " + tp + ".filtSound;\", nargout=0)");
+      L.push("sound_cues = np.array(eng.workspace['sc']).ravel()");
+    }
+
+    if (vars.body_position || vars.hand_position || vars.timestamps) {
       L.push("");
       if (vars.body_position) {
         L.push("eng.eval(\"body = " + tp + ".position.body;\", nargout=0)");
-        L.push("body = np.array(eng.workspace['body'])");
+        L.push("body = np.array(eng.workspace['body'])  # [3 x T x J]");
         L.push("body_x = body[0, :, :]");
         L.push("body_y = body[1, :, :]");
         L.push("body_z = body[2, :, :]");
+      }
+      if (vars.hand_position) {
+        L.push("eng.eval(\"hands = " + tp + ".position.hands;\", nargout=0)");
+        L.push("hands = np.array(eng.workspace['hands'])  # [3 x T x H]");
       }
       if (vars.timestamps) {
         L.push("eng.eval(\"t_hand = " + tp + ".position.time_hand;\", nargout=0)");
@@ -913,33 +947,75 @@ const GetData = ({ parsed }) => {
       }
     }
 
+    if (hasEmg) {
+      L.push("");
+      L.push("eng.eval(\"emg_struct = " + tp + ".emg;\", nargout=0)");
+      L.push("# list node names: eng.eval(\"nodes = fieldnames(rmfield(emg_struct,'Times'));\", nargout=0)");
+      if (vars.emg) {
+        L.push("eng.eval(\"emg_sig = emg_struct.x1_EMG1;\", nargout=0)  # replace x1 with actual node");
+        L.push("emg_sig = np.array(eng.workspace['emg_sig']).ravel()  # [N_emg] raw signal");
+        L.push("eng.eval(\"t_emg = emg_struct.Times.x1_EMG1;\", nargout=0)");
+        L.push("t_emg  = np.array(eng.workspace['t_emg']).ravel()     # [N_emg] seconds lag-aligned");
+      }
+      if (vars.emg_accel) {
+        L.push("eng.eval(\"emg_accx = emg_struct.x1_ACCX;\", nargout=0)  # replace x1 with actual node");
+        L.push("emg_accx = np.array(eng.workspace['emg_accx']).ravel()");
+        L.push("eng.eval(\"emg_accy = emg_struct.x1_ACCY;\", nargout=0)");
+        L.push("emg_accy = np.array(eng.workspace['emg_accy']).ravel()");
+        L.push("eng.eval(\"emg_accz = emg_struct.x1_ACCZ;\", nargout=0)");
+        L.push("emg_accz = np.array(eng.workspace['emg_accz']).ravel()");
+        L.push("eng.eval(\"t_acc = emg_struct.Times.x1_ACCX;\", nargout=0)");
+        L.push("t_acc  = np.array(eng.workspace['t_acc']).ravel()      # [N_acc] seconds");
+      }
+    }
+
     const prints = [];
-    if (vars.ecog)              prints.push("print(f\"ECoG shape:            {pt" + ptNum + "_ecog_np.shape}\")");
-    if (vars.verified_timings)  prints.push("print(f\"Verified timings:      {verified_timings.shape}\")");
-    if (vars.transition_labels) prints.push("print(f\"Transition labels:     {transition_labels.shape}\")");
-    if (vars.body_position)     prints.push("print(f\"Body position shape:   {body.shape}\")");
+    if (vars.ecog)               prints.push("print(f\"ECoG shape:            {pt" + ptNum + "_ecog_np.shape}\")");
+    if (vars.verified_timings)   prints.push("print(f\"Verified timings:      {verified_timings.shape}\")");
+    if (vars.transition_labels)  prints.push("print(f\"Transition labels:     {transition_labels.shape}\")");
+    if (vars.visual_cue_times)   prints.push("print(f\"Visual cue times:      {visual_cue_times.shape}\")");
+    if (vars.visual_cue_labels)  prints.push("print(f\"Visual cue labels:     {visual_cue_labels.shape}\")");
+    if (vars.sound_cues)         prints.push("print(f\"Sound cues:            {sound_cues.shape}\")");
+    if (vars.body_position)      prints.push("print(f\"Body position shape:   {body.shape}\")");
+    if (vars.hand_position)      prints.push("print(f\"Hand position shape:   {hands.shape}\")");
     if (vars.timestamps) {
       prints.push("print(f\"Hand timestamps:       {t_hand.shape}\")");
       prints.push("print(f\"Body timestamps:       {t_body.shape}\")");
     }
+    if (hasEmg && vars.emg)       prints.push("print(f\"EMG signal:            {emg_sig.shape}\")");
+    if (hasEmg && vars.emg_accel) prints.push("print(f\"EMG accel:             {emg_accx.shape}\")");
     if (prints.length) L.push("", ...prints);
 
     return L.join("\n");
-  }, [patient, selTask, recName, vars, ptNum]);
+  }, [patient, selTask, recName, vars, ptNum, precision, rawEcog]);
 
   const matlabCode = useMemo(() => {
     if (!patient || !selTask || !recName) return "% Select a patient and task above";
     if (!Object.values(vars).some(Boolean)) return "% Select at least one variable below";
 
     const tp = "out.pt" + ptNum + "." + recName;
+    const hasEmg = (vars.emg || vars.emg_accel) && ptNum === 15;
     const L = [];
 
     L.push("addpath(genpath('/bdz/restorelab/Precision_Data/preproc_env/Krishna/Functions'));");
     L.push("addpath('/bdz/restorelab/Precision_Data/matlab');");
     L.push("");
-    L.push("out = fetch_precision_data('import', ...");
+
+    const optArgs: string[] = [];
+    if (rawEcog)              optArgs.push("'raw_ecog', true");
+    if (precision !== "auto") optArgs.push("'precision', '" + precision + "'");
+    if (hasEmg)               optArgs.push("'emg', true");
+
+    L.push("out = fetchPrecisionData('import', ...");
     L.push("                          'pt_id', " + ptNum + ", ...");
-    L.push("                          'rec_names', {'" + recName + "'});");
+    if (optArgs.length === 0) {
+      L.push("                          'rec_names', {'" + recName + "'});");
+    } else {
+      L.push("                          'rec_names', {'" + recName + "'}, ...");
+      optArgs.forEach((a, i) =>
+        L.push("                          " + a + (i < optArgs.length - 1 ? ", ..." : ");"))
+      );
+    }
 
     if (vars.ecog || vars.channels || vars.bad_channels) {
       L.push("");
@@ -956,7 +1032,7 @@ const GetData = ({ parsed }) => {
 
     if (vars.verified_timings) {
       L.push("");
-      L.push("verified_timings = " + tp + ".verified_timings;");
+      L.push("verified_timings = " + tp + ".verified_timings;  % [N x 2]");
     }
 
     if (vars.transition_labels) {
@@ -964,13 +1040,31 @@ const GetData = ({ parsed }) => {
       L.push("transition_labels = " + tp + ".filtVisualTransitionLabels;");
     }
 
-    if (vars.body_position || vars.timestamps) {
+    if (vars.visual_cue_times) {
+      L.push("");
+      L.push("visual_cue_times = " + tp + ".filtVisualCueTimes;");
+    }
+
+    if (vars.visual_cue_labels) {
+      L.push("");
+      L.push("visual_cue_labels = " + tp + ".filtVisualCueLabels;");
+    }
+
+    if (vars.sound_cues) {
+      L.push("");
+      L.push("sound_cues = " + tp + ".filtSound;");
+    }
+
+    if (vars.body_position || vars.hand_position || vars.timestamps) {
       L.push("");
       if (vars.body_position) {
-        L.push("body = " + tp + ".position.body;");
+        L.push("body = " + tp + ".position.body;  % [3 x T x J]");
         L.push("body_x = body(1, :, :);");
         L.push("body_y = body(2, :, :);");
         L.push("body_z = body(3, :, :);");
+      }
+      if (vars.hand_position) {
+        L.push("hands = " + tp + ".position.hands;  % [3 x T x H]");
       }
       if (vars.timestamps) {
         L.push("t_hand = " + tp + ".position.time_hand;");
@@ -978,19 +1072,41 @@ const GetData = ({ parsed }) => {
       }
     }
 
-    const prints = [];
-    if (vars.ecog)              prints.push("fprintf('ECoG shape:            %s\\n', mat2str(size(ecog_mat)));");
-    if (vars.verified_timings)  prints.push("fprintf('Verified timings:      %s\\n', mat2str(size(verified_timings)));");
-    if (vars.transition_labels) prints.push("fprintf('Transition labels:     %s\\n', mat2str(size(transition_labels)));");
-    if (vars.body_position)     prints.push("fprintf('Body position shape:   %s\\n', mat2str(size(body)));");
+    if (hasEmg) {
+      L.push("");
+      L.push("emg_struct = " + tp + ".emg;");
+      L.push("% list node names: fieldnames(rmfield(emg_struct, 'Times'))");
+      if (vars.emg) {
+        L.push("emg_sig = emg_struct.x1_EMG1;  % replace x1 with actual node  [1 x N_emg]");
+        L.push("t_emg   = emg_struct.Times.x1_EMG1;  % [N_emg x 1] seconds lag-aligned");
+      }
+      if (vars.emg_accel) {
+        L.push("emg_accx = emg_struct.x1_ACCX;  % replace x1 with actual node  [1 x N_acc]");
+        L.push("emg_accy = emg_struct.x1_ACCY;");
+        L.push("emg_accz = emg_struct.x1_ACCZ;");
+        L.push("t_acc    = emg_struct.Times.x1_ACCX;  % [N_acc x 1] seconds");
+      }
+    }
+
+    const prints: string[] = [];
+    if (vars.ecog)               prints.push("fprintf('ECoG shape:            %s\\n', mat2str(size(ecog_mat)));");
+    if (vars.verified_timings)   prints.push("fprintf('Verified timings:      %s\\n', mat2str(size(verified_timings)));");
+    if (vars.transition_labels)  prints.push("fprintf('Transition labels:     %s\\n', mat2str(size(transition_labels)));");
+    if (vars.visual_cue_times)   prints.push("fprintf('Visual cue times:      %s\\n', mat2str(size(visual_cue_times)));");
+    if (vars.visual_cue_labels)  prints.push("fprintf('Visual cue labels:     %s\\n', mat2str(size(visual_cue_labels)));");
+    if (vars.sound_cues)         prints.push("fprintf('Sound cues:            %s\\n', mat2str(size(sound_cues)));");
+    if (vars.body_position)      prints.push("fprintf('Body position shape:   %s\\n', mat2str(size(body)));");
+    if (vars.hand_position)      prints.push("fprintf('Hand position shape:   %s\\n', mat2str(size(hands)));");
     if (vars.timestamps) {
       prints.push("fprintf('Hand timestamps:       %s\\n', mat2str(size(t_hand)));");
       prints.push("fprintf('Body timestamps:       %s\\n', mat2str(size(t_body)));");
     }
+    if (hasEmg && vars.emg)       prints.push("fprintf('EMG signal:            %s\\n', mat2str(size(emg_sig)));");
+    if (hasEmg && vars.emg_accel) prints.push("fprintf('EMG accel:             %s\\n', mat2str(size(emg_accx)));");
     if (prints.length) L.push("", ...prints);
 
     return L.join("\n");
-  }, [patient, selTask, recName, vars, ptNum]);
+  }, [patient, selTask, recName, vars, ptNum, precision, rawEcog]);
 
   const activeCode = lang === "python" ? code : matlabCode;
 
@@ -1048,22 +1164,50 @@ const GetData = ({ parsed }) => {
         </div>
 
         <div>
-          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:10 }}>Variables</div>
-          {varGroups.map((g) => (
-            <div key={g} style={{ marginBottom:14 }}>
-              <div style={{ fontSize:9.5, color:T.inkFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'Source Code Pro',monospace", marginBottom:5, paddingBottom:4, borderBottom:`1px solid ${T.borderSoft}` }}>{g}</div>
-              {VARIABLE_OPTIONS.filter((v) => v.group === g).map((v) => (
-                <label key={v.key} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"5px 0", cursor:"pointer" }}>
-                  <input type="checkbox" checked={vars[v.key]} onChange={() => setVars((pv) => ({ ...pv, [v.key]: !pv[v.key] }))}
-                    style={{ marginTop:2, accentColor:T.accent, cursor:"pointer" }}/>
-                  <div>
-                    <div style={{ fontSize:13, color:T.ink }}>{v.label}</div>
-                    <div style={{ fontSize:10.5, color:T.inkFaint, fontFamily:"'Source Code Pro',monospace" }}>{v.desc}</div>
-                  </div>
-                </label>
-              ))}
+          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:10 }}>Options</div>
+          <div style={{ marginBottom:16, display:"flex", flexDirection:"column", gap:7 }}>
+            <div>
+              <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'Source Code Pro',monospace", marginBottom:4 }}>Precision</div>
+              <select value={precision} onChange={(e) => setPrecision(e.target.value)}
+                style={{ width:"100%", padding:"5px 8px", background:T.bg, border:`1px solid ${T.border}`, borderRadius:5, color:T.ink, fontSize:12, fontFamily:"'Source Code Pro',monospace", cursor:"pointer" }}>
+                <option value="auto">auto (default)</option>
+                <option value="double">double</option>
+                <option value="single">single</option>
+              </select>
             </div>
-          ))}
+            <label style={{ display:"flex", alignItems:"center", gap:8, cursor:"pointer" }}>
+              <input type="checkbox" checked={rawEcog} onChange={() => setRawEcog((v) => !v)}
+                style={{ accentColor:T.accent, cursor:"pointer" }}/>
+              <div>
+                <div style={{ fontSize:12.5, color:T.ink }}>Raw ECoG</div>
+                <div style={{ fontSize:10, color:T.inkFaint, fontFamily:"'Source Code Pro',monospace" }}>read .raw.dat instead of .ecog.dat</div>
+              </div>
+            </label>
+          </div>
+
+          <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:10 }}>Variables</div>
+          {varGroups.map((g) => {
+            const opts = VARIABLE_OPTIONS.filter((v) => v.group === g && (!(v as any).ptOnly || ptNum === (v as any).ptOnly));
+            if (opts.length === 0) return null;
+            return (
+              <div key={g} style={{ marginBottom:14 }}>
+                <div style={{ fontSize:9.5, color:T.inkFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'Source Code Pro',monospace", marginBottom:5, paddingBottom:4, borderBottom:`1px solid ${T.borderSoft}`, display:"flex", alignItems:"center", gap:6 }}>
+                  {g}
+                  {g==="EMG"&&<span style={{ fontSize:9, color:T.accent, background:T.accentLight, padding:"1px 5px", borderRadius:3, textTransform:"none" }}>P15 only</span>}
+                </div>
+                {opts.map((v) => (
+                  <label key={v.key} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"5px 0", cursor:"pointer" }}>
+                    <input type="checkbox" checked={vars[v.key]} onChange={() => setVars((pv) => ({ ...pv, [v.key]: !pv[v.key] }))}
+                      style={{ marginTop:2, accentColor:T.accent, cursor:"pointer" }}/>
+                    <div>
+                      <div style={{ fontSize:13, color:T.ink }}>{v.label}</div>
+                      <div style={{ fontSize:10.5, color:T.inkFaint, fontFamily:"'Source Code Pro',monospace" }}>{v.desc}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            );
+          })}
         </div>
       </div>
 
