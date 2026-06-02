@@ -809,8 +809,8 @@ const VARIABLE_OPTIONS = [
   { key:"body_position",     label:"Body position",     group:"Kinematics", desc:'body, body_x/y/z  — [3 × T × J]' },
   { key:"hand_position",     label:"Hand position",     group:"Kinematics", desc:'hands  — [3 × T × H]' },
   { key:"timestamps",        label:"Timestamps",        group:"Kinematics", desc:'t_hand, t_body' },
-  { key:"emg",               label:"EMG signal",        group:"EMG",        desc:'emg_sig, t_emg per node', ptOnly:15 },
-  { key:"emg_accel",         label:"EMG accelerometer", group:"EMG",        desc:'emg_accx/y/z, t_acc per node', ptOnly:15 },
+  { key:"emg",               label:"EMG signal",        group:"EMG",        desc:'emg_sig, t_emg per node' },
+  { key:"emg_accel",         label:"EMG accelerometer", group:"EMG",        desc:'emg_accx/y/z, t_acc per node' },
 ];
 
 const DEFAULT_VARS = { ecog:true, channels:true, bad_channels:true, verified_timings:false, transition_labels:false, visual_cue_times:false, visual_cue_labels:false, sound_cues:false, body_position:false, hand_position:false, timestamps:false, emg:false, emg_accel:false };
@@ -836,6 +836,9 @@ const GetData = ({ parsed }) => {
 
   const patient = parsed.patientMap[selId];
   const ptNum   = patient?.num ?? 0;
+  const hasEmgHardware = useMemo(() =>
+    patient?.hardwareRows?.some((r) => normalizeK(firstVal(r, ["Tasks","Task"])).includes("emg")) ?? false,
+  [patient]);
 
   const taskNames = useMemo(() => {
     if (!patient) return [];
@@ -863,7 +866,7 @@ const GetData = ({ parsed }) => {
     if (!Object.values(vars).some(Boolean)) return "# Select at least one variable below";
 
     const tp = "out.pt" + ptNum + "." + recName;
-    const hasEmg = (vars.emg || vars.emg_accel) && ptNum === 15;
+    const hasEmg = (vars.emg || vars.emg_accel) && hasEmgHardware;
     const L = [];
 
     L.push("import numpy as np", "import matlab.engine", "");
@@ -994,7 +997,7 @@ const GetData = ({ parsed }) => {
     if (!Object.values(vars).some(Boolean)) return "% Select at least one variable below";
 
     const tp = "out.pt" + ptNum + "." + recName;
-    const hasEmg = (vars.emg || vars.emg_accel) && ptNum === 15;
+    const hasEmg = (vars.emg || vars.emg_accel) && hasEmgHardware;
     const L = [];
 
     L.push("addpath(genpath('/bdz/restorelab/Precision_Data/preproc_env/Krishna/Functions'));");
@@ -1187,13 +1190,13 @@ const GetData = ({ parsed }) => {
 
           <div style={{ fontSize:9, color:T.inkFainter, textTransform:"uppercase", letterSpacing:"0.1em", fontFamily:"'Source Code Pro',monospace", marginBottom:10 }}>Variables</div>
           {varGroups.map((g) => {
-            const opts = VARIABLE_OPTIONS.filter((v) => v.group === g && (!(v as any).ptOnly || ptNum === (v as any).ptOnly));
+            const opts = VARIABLE_OPTIONS.filter((v) => v.group === g && (v.group !== "EMG" || hasEmgHardware));
             if (opts.length === 0) return null;
             return (
               <div key={g} style={{ marginBottom:14 }}>
                 <div style={{ fontSize:9.5, color:T.inkFaint, textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'Source Code Pro',monospace", marginBottom:5, paddingBottom:4, borderBottom:`1px solid ${T.borderSoft}`, display:"flex", alignItems:"center", gap:6 }}>
                   {g}
-                  {g==="EMG"&&<span style={{ fontSize:9, color:T.accent, background:T.accentLight, padding:"1px 5px", borderRadius:3, textTransform:"none" }}>P15 only</span>}
+                  {g==="EMG"&&<span style={{ fontSize:9, color:T.ok, background:T.okBg, padding:"1px 5px", borderRadius:3, textTransform:"none" }}>in hardware</span>}
                 </div>
                 {opts.map((v) => (
                   <label key={v.key} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"5px 0", cursor:"pointer" }}>
